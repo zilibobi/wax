@@ -475,7 +475,8 @@ function ImportGlobals(refId)
             for PathMatch in string_gmatch(module, "([^/]*)/?") do
                 local RealIndex = PathMatch
                 if PathMatch == ".." then
-                    RealIndex = "Parent"
+                    CurrentRefPointer = CurrentRefPointer.Parent
+                    continue
                 end
 
                 -- Don't advance dir if it's just another "/" either
