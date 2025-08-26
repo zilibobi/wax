@@ -145,6 +145,10 @@ local InstanceMethods = {
     end},
 
     FindFirstAncestorOfClass = { {"string"}, function(self, className)
+        if className == "Plugin" then
+          return script:FindFirstAncestorOfClass("Plugin") -- fallback for plugins as they are created at runtime
+        end
+
         local RefPointer = self.Parent
         while RefPointer do
             if RefPointer.ClassName == className then
