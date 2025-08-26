@@ -144,6 +144,17 @@ local InstanceMethods = {
         end
     end},
 
+    FindFirstAncestorOfClass = { {"string"}, function(self, className)
+        local RefPointer = self.Parent
+        while RefPointer do
+            if RefPointer.ClassName == className then
+                return RefPointer
+            end
+
+            RefPointer = RefPointer.Parent
+        end
+    end},
+
     -- Just to implement for traversal usage
     WaitForChild = { {"string", "number?"}, function(self, name)
         return self:FindFirstChild(name)
