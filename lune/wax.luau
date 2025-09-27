@@ -1,30 +1,34 @@
 -- MIT License | Copyright (c) 2023-2024 Latte Softworks <https://latte.to>
 
 if string.sub(_VERSION, 1, 4) ~= "Lune" then
-    print("!! Wax doesn't appear to be running on Lune (https://lune-org.github.io/docs), which this script requires, exitting..")
-    return
+	print(
+		"!! Wax doesn't appear to be running on Lune (https://lune-org.github.io/docs), which this script requires, exitting.."
+	)
+	return
 end
 
 do
-    -- Minimum "recommended" ver
-    local MajorRec,
-          MinorRec,
-          PatchRec = 0, 8, 0
+	-- Minimum "recommended" ver
+	local MajorRec, MinorRec, PatchRec = 0, 8, 0
 
-    local Major,
-          Minor,
-          Patch = string.match(_VERSION, "Lune (%d+).(%d+).(%d+)")
+	local Major, Minor, Patch = string.match(_VERSION, "Lune (%d+).(%d+).(%d+)")
 
-    Major, Minor, Patch = tonumber(Major), tonumber(Minor), tonumber(Patch)
+	Major, Minor, Patch = tonumber(Major), tonumber(Minor), tonumber(Patch)
 
-    if not Major then
-        print(`! Can't parse Lune's version on the assumed format from "{_VERSION}", continuing anyway..\n`)
-    else
-        _G.LuneVersion = `{Major}.{Minor}.{Patch}`
-        if Major < MajorRec or (Minor < MinorRec and Major <= MajorRec) or (Patch < PatchRec and Minor <= MinorRec and Major <= MajorRec) then
-            print(`! Lune version "{_G.LuneVersion}" detected, but Wax currently recommends Lune {MajorRec}.{MinorRec}.{PatchRec} or higher, continuing anyway..\n`)
-        end
-    end
+	if not Major then
+		print(`! Can't parse Lune's version on the assumed format from "{_VERSION}", continuing anyway..\n`)
+	else
+		_G.LuneVersion = `{Major}.{Minor}.{Patch}`
+		if
+			Major < MajorRec
+			or (Minor < MinorRec and Major <= MajorRec)
+			or (Patch < PatchRec and Minor <= MinorRec and Major <= MajorRec)
+		then
+			print(
+				`! Lune version "{_G.LuneVersion}" detected, but Wax currently recommends Lune {MajorRec}.{MinorRec}.{PatchRec} or higher, continuing anyway..\n`
+			)
+		end
+	end
 end
 
 local fs = require("@lune/fs")
@@ -45,7 +49,8 @@ local CommandUtils = LuneUtils.CommandUtils
 local Run = LuneUtils.Run
 local ParseArgs = LuneUtils.ParseArgs
 
-local UsageMessage = `Wax {Version}\n` .. [[
+local UsageMessage = `Wax {Version}\n`
+	.. [[
 A Fast Runtime-Based Lua 5.1x+/Luau Project Bundler, Using Roblox Models and Module-Require Semantics
 
 USAGE:
@@ -109,6 +114,9 @@ SUBCOMMANDS:
 
       * verbose[=true]
             "Verbose" (detailed) output logging from CLI/bundler
+
+      * assets[=false]
+            Whether to bundle non-compatible instances as assets
 ]]
 
 local DirectionToHelp = "Run `lune wax help` for more info"
@@ -117,345 +125,382 @@ local DirectionToHelp = "Run `lune wax help` for more info"
 stdio.write(stdio.color("reset") .. stdio.style("reset"))
 
 local function EncodeShellData(shellData: string): string
-    return if process.os == "windows" then
-        shellData -- I swear, Windows makes everything worse
-    else '"' .. StringUtils.SerializeStringData(shellData) .. '"'
+	return if process.os == "windows"
+		then shellData -- I swear, Windows makes everything worse
+		else '"' .. StringUtils.SerializeStringData(shellData) .. '"'
 end
 
 local CommandArgs = table.clone(process.args)
 local Subcommand = table.remove(CommandArgs, 1)
 
 if not Subcommand then
-    print(UsageMessage)
-    return
+	print(UsageMessage)
+	return
 end
 
 Subcommand = string.lower(Subcommand)
 
 if Subcommand == "help" then
-    print(UsageMessage)
-    return
+	print(UsageMessage)
+	return
 elseif Subcommand == "version" then
-    print(`Wax v{Version}`)
-    return
+	print(`Wax v{Version}`)
+	return
 elseif Subcommand == "bundle" then
-    -- Below is our user-proofing hell!
-    -- “An idiot admires complexity, a genius admires simplicity" - Terry A Davis
+	-- Below is our user-proofing hell!
+	-- “An idiot admires complexity, a genius admires simplicity" - Terry A Davis
 
-    -- Parse and init default CLI options
-    local Options = ParseArgs(CommandArgs, {
-        -- Option = {Type, DefaultValue, IsRequired?}
-        ["input"] = {"string", "default.project.json"},
-        ["output"] = {"string", nil},
-        ["minify"] = {"boolean", false},
-        ["env-name"] = {"string", nil}, -- BundleModel() internally defaults to "WaxRuntime"
-        ["darklua-config-path"] = {"string", nil},
-        ["temp-dir-base"] = {"string", nil},
-        ["extra-offset-lines"] = {"number", 0},
-        ["ci-mode"] = {"boolean", false},
-        ["verbose"] = {"boolean", true},
-    }, UsageMessage)
+	-- Parse and init default CLI options
+	local Options = ParseArgs(CommandArgs, {
+		-- Option = {Type, DefaultValue, IsRequired?}
+		["input"] = { "string", "default.project.json" },
+		["output"] = { "string", nil },
+		["minify"] = { "boolean", false },
+		["env-name"] = { "string", nil }, -- BundleModel() internally defaults to "WaxRuntime"
+		["darklua-config-path"] = { "string", nil },
+		["temp-dir-base"] = { "string", nil },
+		["extra-offset-lines"] = { "number", 0 },
+		["ci-mode"] = { "boolean", false },
+		["verbose"] = { "boolean", true },
+		["assets"] = { "boolean", false },
+	}, UsageMessage)
 
-    local Verbose = Options["verbose"]
-    local CIMode = Options["ci-mode"]
+	local BundleAssets = Options["assets"]
 
-    local Minify = Options["minify"]
-    local EnvName = Options["env-name"]
+	local Verbose = Options["verbose"]
+	local CIMode = Options["ci-mode"]
 
-    local function RunIfVerbose(f, ...)
-        if Verbose then
-            f(...)
-        end
-    end
+	local Minify = Options["minify"]
+	local EnvName = Options["env-name"]
 
-    -- These is being defined here since we're utilizing RunIfVerbose()
-    local function WriteFile(path: string, contents: string)
-        RunIfVerbose(Log.Info, `Writing to "{path}"..`)
-        fs.writeFile(path, contents)
-    end
+	local function RunIfVerbose(f, ...)
+		if Verbose then
+			f(...)
+		end
+	end
 
-    local function RemoveFile(path: string)
-        RunIfVerbose(Log.Info, `Deleting file at "{path}"..`)
-        fs.removeFile(path)
-    end
+	-- These is being defined here since we're utilizing RunIfVerbose()
+	local function WriteFile(path: string, contents: string)
+		RunIfVerbose(Log.Info, `Writing to "{path}"..`)
+		fs.writeFile(path, contents)
+	end
 
-    local function WriteDir(path: string)
-        RunIfVerbose(Log.Info, `Creating directory at "{path}"..`)
-        fs.writeDir(path)
-    end
+	local function RemoveFile(path: string)
+		RunIfVerbose(Log.Info, `Deleting file at "{path}"..`)
+		fs.removeFile(path)
+	end
 
-    local function RemoveDir(path: string)
-        RunIfVerbose(Log.Info, `Removing directory at "{path}"..`)
-        fs.removeDir(path)
-    end
+	local function WriteDir(path: string)
+		RunIfVerbose(Log.Info, `Creating directory at "{path}"..`)
+		fs.writeDir(path)
+	end
 
+	local function RemoveDir(path: string)
+		RunIfVerbose(Log.Info, `Removing directory at "{path}"..`)
+		fs.removeDir(path)
+	end
 
-    -- `input` option handling:
+	-- `input` option handling:
 
-    local Input = Options["input"]
+	local Input = Options["input"]
 
-    if not fs.isFile(Input) then
-        Log.Error(`Failed to find file path "{Input}" from \`input\` option\n`)
-        print(DirectionToHelp)
-        process.exit(1)
-    end
+	if not fs.isFile(Input) then
+		Log.Error(`Failed to find file path "{Input}" from \`input\` option\n`)
+		print(DirectionToHelp)
+		process.exit(1)
+	end
 
-    local InputDirectory = StringUtils.DirectoryOfFilePath(Input) or ""
+	local InputDirectory = StringUtils.DirectoryOfFilePath(Input) or ""
 
-    local InputLower = string.lower(Input)
-    local InputType = if string.sub(InputLower, -5) == ".rbxm" then
-            ".rbxm" -- Roblox model (binary)
-        elseif string.sub(InputLower, -6) == ".rbxmx" then
-            ".rbxmx" -- Roblox model (XML)
-        elseif string.sub(InputLower, -13) == ".project.json" then
-            ".project.json" -- Rojo project file
-        else nil
+	local InputLower = string.lower(Input)
+	local InputType = if string.sub(InputLower, -5) == ".rbxm"
+		then ".rbxm" -- Roblox model (binary)
+		elseif string.sub(InputLower, -6) == ".rbxmx" then ".rbxmx" -- Roblox model (XML)
+		elseif string.sub(InputLower, -13) == ".project.json" then ".project.json" -- Rojo project file
+		else nil
 
-    if not InputType then
-        Log.Error(`Invalid file type ".{StringUtils.FileType(Input)}" for \`input\`, expected [".rbxm", ".rbxmx", ".project.json"]\n`)
-        print(DirectionToHelp)
-        process.exit(1)
-    end
+	if not InputType then
+		Log.Error(
+			`Invalid file type ".{StringUtils.FileType(Input)}" for \`input\`, expected [".rbxm", ".rbxmx", ".project.json"]\n`
+		)
+		print(DirectionToHelp)
+		process.exit(1)
+	end
 
-    -- `output` option handling:
+	-- `output` option handling:
 
-    local Output = Options["output"]
+	local Output = Options["output"]
 
-    if not Output then
-        local NewOutputBase
+	if not Output then
+		local NewOutputBase
 
-        if InputType == ".project.json" then
-            local ParseSuccess, ErrorOrParsed = pcall(serde.decode, "json" :: "json", fs.readFile(Input))
+		if InputType == ".project.json" then
+			local ParseSuccess, ErrorOrParsed = pcall(serde.decode, "json" :: "json", fs.readFile(Input))
 
-            if not ParseSuccess then
-                Log.Error(`Failed to parse Rojo project file at "{Input}": {ErrorOrParsed}`)
-                process.exit(1)
-            end
+			if not ParseSuccess then
+				Log.Error(`Failed to parse Rojo project file at "{Input}": {ErrorOrParsed}`)
+				process.exit(1)
+			end
 
-            if not ErrorOrParsed.name or type(ErrorOrParsed.name) ~= "string" then
-                Log.Warn(`Couldn't find proper "name" entry at the root of Rojo project file at "{Input}", using its file name base instead..`)
-            else
-                NewOutputBase = ErrorOrParsed.name
-            end
-        end
+			if not ErrorOrParsed.name or type(ErrorOrParsed.name) ~= "string" then
+				Log.Warn(
+					`Couldn't find proper "name" entry at the root of Rojo project file at "{Input}", using its file name base instead..`
+				)
+			else
+				NewOutputBase = ErrorOrParsed.name
+			end
+		end
 
-        -- If it's not a Rojo project file or `NewOutputBase` still hasn't been set..
-        if not NewOutputBase then
-            NewOutputBase = StringUtils.FilePathWithoutExtension(Input, false)
-        end
-        
-        if not NewOutputBase then
-            Log.InternalError(`Failed to get file path without the extension for "{Output}"`)
-            process.exit(1)
-        end
+		-- If it's not a Rojo project file or `NewOutputBase` still hasn't been set..
+		if not NewOutputBase then
+			NewOutputBase = StringUtils.FilePathWithoutExtension(Input, false)
+		end
 
-        NewOutputBase ..= ".wax.lua"
-        Output = InputDirectory .. NewOutputBase
-    else
-        local OutputFileType = StringUtils.FileType(Output)
-        local DirectoryOfOutput = StringUtils.DirectoryOfFilePath(Output)
+		if not NewOutputBase then
+			Log.InternalError(`Failed to get file path without the extension for "{Output}"`)
+			process.exit(1)
+		end
 
-        if not DirectoryOfOutput then
-            Log.Error(`\`output\` file path given, "{Output}" not a valid path\n`)
-            print(DirectionToHelp)
-            process.exit(1)
-        elseif not fs.isDir(DirectoryOfOutput) then
-            Log.Error(`Directory of \`output\` file path given, "{DirectoryOfOutput}" not found/invalid\n`)
-            print(DirectionToHelp)
-            process.exit(1)
-        elseif not OutputFileType or not table.find({"lua", "luau"}, OutputFileType) then
-            local FileTypeDisplay = if OutputFileType == "" then "<empty>" else "." .. OutputFileType
+		NewOutputBase ..= ".wax.lua"
+		Output = InputDirectory .. NewOutputBase
+	else
+		local OutputFileType = StringUtils.FileType(Output)
+		local DirectoryOfOutput = StringUtils.DirectoryOfFilePath(Output)
 
-            Log.Error(`File type of \`output\` ({FileTypeDisplay}) invalid, expected [".lua", ".luau"]\n`)
-            print(DirectionToHelp)
-            process.exit(1)
-        end
-    end
+		if not DirectoryOfOutput then
+			Log.Error(`\`output\` file path given, "{Output}" not a valid path\n`)
+			print(DirectionToHelp)
+			process.exit(1)
+		elseif not fs.isDir(DirectoryOfOutput) then
+			Log.Error(`Directory of \`output\` file path given, "{DirectoryOfOutput}" not found/invalid\n`)
+			print(DirectionToHelp)
+			process.exit(1)
+		elseif not OutputFileType or not table.find({ "lua", "luau" }, OutputFileType) then
+			local FileTypeDisplay = if OutputFileType == "" then "<empty>" else "." .. OutputFileType
 
-    local OutputFileName = StringUtils.FileNameFromPath(Output)
-    if not OutputFileName then
-        Log.InternalError(`Failed to parse file name from output file path "{Output}"`)
-        process.exit(1)
-    end
+			Log.Error(`File type of \`output\` ({FileTypeDisplay}) invalid, expected [".lua", ".luau"]\n`)
+			print(DirectionToHelp)
+			process.exit(1)
+		end
+	end
 
-    local OutputFileNameWithoutExtension = StringUtils.FileNameWithoutExtension(OutputFileName, false)
-    if not OutputFileNameWithoutExtension then
-        Log.InternalError(`Failed to parse file name without its extension from "{OutputFileName}"`)
-        process.exit(1)
-    end
+	local OutputFileName = StringUtils.FileNameFromPath(Output)
+	if not OutputFileName then
+		Log.InternalError(`Failed to parse file name from output file path "{Output}"`)
+		process.exit(1)
+	end
 
-    -- `darklua-config-path` option handling:
+	local OutputFileNameWithoutExtension = StringUtils.FileNameWithoutExtension(OutputFileName, false)
+	if not OutputFileNameWithoutExtension then
+		Log.InternalError(`Failed to parse file name without its extension from "{OutputFileName}"`)
+		process.exit(1)
+	end
 
-    DarkluaConfigPath = Options["darklua-config-path"]
+	-- `darklua-config-path` option handling:
 
-    if DarkluaConfigPath and not fs.isFile(DarkluaConfigPath) then
-        Log.Error(`File path given for \`darklua-config-path\`, "{DarkluaConfigPath}" not found`)
-        process.exit(1)
-    end
+	DarkluaConfigPath = Options["darklua-config-path"]
 
-    -- `temp-dir-base` option handling:
+	if DarkluaConfigPath and not fs.isFile(DarkluaConfigPath) then
+		Log.Error(`File path given for \`darklua-config-path\`, "{DarkluaConfigPath}" not found`)
+		process.exit(1)
+	end
 
-    local TempDirBase = Options["temp-dir-base"]
+	-- `temp-dir-base` option handling:
 
-    if not TempDirBase then
-        TempDirBase = StringUtils.DirectoryOfFilePath(Output)
-    elseif not fs.isDir(TempDirBase) then
-        Log.Error(`\`temp-dir-base\` directory given, "{TempDirBase}" not found/invalid\n`)
-        print(DirectionToHelp)
-        process.exit(1)
-    end
+	local TempDirBase = Options["temp-dir-base"]
 
-    if not string.match(TempDirBase, "[/\\]$") then
-        TempDirBase ..= "/"
-    end
+	if not TempDirBase then
+		TempDirBase = StringUtils.DirectoryOfFilePath(Output)
+	elseif not fs.isDir(TempDirBase) then
+		Log.Error(`\`temp-dir-base\` directory given, "{TempDirBase}" not found/invalid\n`)
+		print(DirectionToHelp)
+		process.exit(1)
+	end
 
-    -- The actual temp dir path we'll be using
-    local TempDir = TempDirBase .. ".wax-tmp/"
+	if not string.match(TempDirBase, "[/\\]$") then
+		TempDirBase ..= "/"
+	end
 
-    -- If it already exists for some reason..?
-    if fs.isDir(TempDir) then
-        RunIfVerbose(Log.Info, `Old .wax-tmp dir at "{TempDir}" already exists, removing..`)
-        fs.removeDir(TempDir)
-    end
+	-- The actual temp dir path we'll be using
+	local TempDir = TempDirBase .. ".wax-tmp/"
 
-    ExtraOffsetLines = Options["extra-offset-lines"]
-    if ExtraOffsetLines < 0 then
-        Log.Error(`Option \`extra-offset-lines\` ({ExtraOffsetLines}) cannot be less than 0\n`)
-        print(DirectionToHelp)
-        process.exit(1)
-    end
-    if not Minify and ExtraOffsetLines > 0 then
-        RunIfVerbose(Log.Info, `(Note) Runtime line debugging *will* display with the assumption that \`{ExtraOffsetLines}\` lines will be added to the output by you manually; make sure this is EXACT, as debugging info could be inaccurate otherwise`)
-    end
+	-- If it already exists for some reason..?
+	if fs.isDir(TempDir) then
+		RunIfVerbose(Log.Info, `Old .wax-tmp dir at "{TempDir}" already exists, removing..`)
+		fs.removeDir(TempDir)
+	end
 
-    -- Now we'll start non-option processing
+	ExtraOffsetLines = Options["extra-offset-lines"]
+	if ExtraOffsetLines < 0 then
+		Log.Error(`Option \`extra-offset-lines\` ({ExtraOffsetLines}) cannot be less than 0\n`)
+		print(DirectionToHelp)
+		process.exit(1)
+	end
+	if not Minify and ExtraOffsetLines > 0 then
+		RunIfVerbose(
+			Log.Info,
+			`(Note) Runtime line debugging *will* display with the assumption that \`{ExtraOffsetLines}\` lines will be added to the output by you manually; make sure this is EXACT, as debugging info could be inaccurate otherwise`
+		)
+	end
 
-    -- Now, we may need to eventually worry about exitting upon random unhandled errors
-    -- since we may be creating a temp dir in the user's directory
-    local function BadExit(message: string?)
-        if message then
-            Log.Error(message)
-        end
+	-- Now we'll start non-option processing
 
-        if fs.isDir(TempDir) then
-            RemoveDir(TempDir)
-        end
+	-- Now, we may need to eventually worry about exitting upon random unhandled errors
+	-- since we may be creating a temp dir in the user's directory
+	local function BadExit(message: string?)
+		if message then
+			Log.Error(message)
+		end
 
-        process.exit(1)
-    end
+		if fs.isDir(TempDir) then
+			RemoveDir(TempDir)
+		end
 
-    -- Check for necessary commands
-    if InputType == ".project.json" and not CommandUtils.CommandExists("rojo") then
-        Log.Error(`Rojo project file given for input ("{Input}"), but the \`rojo\` command wasn't found in your PATH environment variable..\n`)
-        print(DirectionToHelp)
-        process.exit(1)
-    end
+		process.exit(1)
+	end
 
-    local DarkluaBinaryExists = CommandUtils.CommandExists("darklua")
-    if Minify and not DarkluaBinaryExists then
-        Log.Warn("The `minify` option is set as true, but the `darklua` command wasn't found in your PATH environment variable.. (Wax won't be able to completely minify the output)")
-        if not CIMode then
-            local ShouldContinue = stdio.prompt("confirm", "Continue anyway?")
-            if not ShouldContinue then
-                BadExit()
-            end
-        end
-    end
+	-- Check for necessary commands
+	if InputType == ".project.json" and not CommandUtils.CommandExists("rojo") then
+		Log.Error(
+			`Rojo project file given for input ("{Input}"), but the \`rojo\` command wasn't found in your PATH environment variable..\n`
+		)
+		print(DirectionToHelp)
+		process.exit(1)
+	end
 
-    -- Create tmp dir if applicable
-    if InputType == ".project.json" or (Minify and DarkluaBinaryExists) then
-        WriteDir(TempDir)
-    end
+	local DarkluaBinaryExists = CommandUtils.CommandExists("darklua")
+	if Minify and not DarkluaBinaryExists then
+		Log.Warn(
+			"The `minify` option is set as true, but the `darklua` command wasn't found in your PATH environment variable.. (Wax won't be able to completely minify the output)"
+		)
+		if not CIMode then
+			local ShouldContinue = stdio.prompt("confirm", "Continue anyway?")
+			if not ShouldContinue then
+				BadExit()
+			end
+		end
+	end
 
-    local ModelRoot
+	-- Create tmp dir if applicable
+	if InputType == ".project.json" or (Minify and DarkluaBinaryExists) then
+		WriteDir(TempDir)
+	end
 
-    if table.find({".rbxm", ".rbxmx"}, InputType) then -- Roblox model file (direct)
-        RunIfVerbose(Log.Info, `Deserializing Roblox model file at "{Input}"..`)
-        local Success, ModelRootOrError = pcall(roblox.deserializeModel, fs.readFile(Input))
+	local ModelRoot
 
-        if not Success then -- ModelRootOrError is an err msg
-            BadExit(`Failed to deserialize Roblox model file at "{Input}": {ModelRootOrError}`)
-        end
+	if table.find({ ".rbxm", ".rbxmx" }, InputType) then -- Roblox model file (direct)
+		RunIfVerbose(Log.Info, `Deserializing Roblox model file at "{Input}"..`)
+		local Success, ModelRootOrError = pcall(roblox.deserializeModel, fs.readFile(Input))
 
-        -- Here, it's just the ModelRoot return ofc
-        ModelRoot = ModelRootOrError
-    elseif InputType == ".project.json" then -- Rojo project file
-        local ModelOutputFileName = TempDir .. OutputFileNameWithoutExtension .. ".o.rbxm"
-        RunIfVerbose(Log.Info, `Building from Rojo project file to "{ModelOutputFileName}"`)
+		if not Success then -- ModelRootOrError is an err msg
+			BadExit(`Failed to deserialize Roblox model file at "{Input}": {ModelRootOrError}`)
+		end
 
-        Run(
-            "rojo", {
-                "build",
-                "-o",
-                EncodeShellData(ModelOutputFileName),
-                EncodeShellData(Input),
-            },
-            false,
-            BadExit -- Run() has an option to provide an err handler ourselves
-        )
+		-- Here, it's just the ModelRoot return ofc
+		ModelRoot = ModelRootOrError
+	elseif InputType == ".project.json" then -- Rojo project file
+		local ModelOutputFileName = TempDir .. OutputFileNameWithoutExtension .. ".o.rbxm"
+		RunIfVerbose(Log.Info, `Building from Rojo project file to "{ModelOutputFileName}"`)
 
-        ModelRoot = roblox.deserializeModel(fs.readFile(ModelOutputFileName))
-        RemoveFile(ModelOutputFileName) -- Remove temporary rbxm
-    end
+		Run(
+			"rojo",
+			{
+				"build",
+				"-o",
+				EncodeShellData(ModelOutputFileName),
+				EncodeShellData(Input),
+			},
+			false,
+			BadExit -- Run() has an option to provide an err handler ourselves
+		)
 
-    local BundleSuccess, CodegenOutputOrError, FailedCompilations = pcall(BundleModel, ModelRoot, EnvName, Minify, ExtraOffsetLines, Verbose)
+		ModelRoot = roblox.deserializeModel(fs.readFile(ModelOutputFileName))
+		RemoveFile(ModelOutputFileName) -- Remove temporary rbxm
+	end
 
-    if not BundleSuccess then
-        BadExit(`Error during BundleModel() process: {CodegenOutputOrError}`)
-    end
+	local BundleSuccess, CodegenOutputOrError, AssetFolder, FailedCompilations =
+		pcall(BundleModel, ModelRoot, EnvName, Minify, ExtraOffsetLines, Verbose, BundleAssets)
 
-    if Minify and DarkluaBinaryExists then
-        local TempOutputFilePath = TempDir .. OutputFileName
-        WriteFile(TempOutputFilePath, CodegenOutputOrError)
+	if not BundleSuccess then
+		BadExit(`Error during BundleModel() process: {CodegenOutputOrError}`)
+	end
 
-        RunIfVerbose(Log.Info, "Starting minification process with Darklua")
+	local DidWrite = false
 
-        local ExtraDarkluaProcessArgs = {}
+	if Minify and DarkluaBinaryExists then
+		local TempOutputFilePath = TempDir .. OutputFileName
+		WriteFile(TempOutputFilePath, CodegenOutputOrError)
 
-        -- Check for possible default Darklua cfg files under CWD
-        local TempDarkluaConfigPath = TempDir .. ".darklua.json"
-        local TempDarkluaConfigWasAdded = false
+		RunIfVerbose(Log.Info, "Starting minification process with Darklua")
 
-        if DarkluaConfigPath then
-            table.insert(ExtraDarkluaProcessArgs, `-c={EncodeShellData(DarkluaConfigPath)}`)
-        elseif not fs.isFile(".darklua.json") and not fs.isFile(".darklua.json5") then
-            RunIfVerbose(Log.Info, `No default Darklua config file found in CWD; creating our default config at "{TempDarkluaConfigPath}"`)
-            WriteFile(TempDarkluaConfigPath, DefaultDarkluaConfig)
-            TempDarkluaConfigWasAdded = true
+		local ExtraDarkluaProcessArgs = {}
 
-            table.insert(ExtraDarkluaProcessArgs, `-c={EncodeShellData(TempDarkluaConfigPath)}`)
-        end
+		-- Check for possible default Darklua cfg files under CWD
+		local TempDarkluaConfigPath = TempDir .. ".darklua.json"
+		local TempDarkluaConfigWasAdded = false
 
-        Run("darklua", {
-            "process",
-            EncodeShellData(TempOutputFilePath),
-            EncodeShellData(Output),
-            unpack(ExtraDarkluaProcessArgs),
-        })
+		if DarkluaConfigPath then
+			table.insert(ExtraDarkluaProcessArgs, `-c={EncodeShellData(DarkluaConfigPath)}`)
+		elseif not fs.isFile(".darklua.json") and not fs.isFile(".darklua.json5") then
+			RunIfVerbose(
+				Log.Info,
+				`No default Darklua config file found in CWD; creating our default config at "{TempDarkluaConfigPath}"`
+			)
+			WriteFile(TempDarkluaConfigPath, DefaultDarkluaConfig)
+			TempDarkluaConfigWasAdded = true
 
-        RemoveFile(TempOutputFilePath)
-        if TempDarkluaConfigWasAdded then
-            RemoveFile(TempDarkluaConfigPath)
-        end
-    else
-        -- Just write directly
-        WriteFile(Output, CodegenOutputOrError)
-    end
+			table.insert(ExtraDarkluaProcessArgs, `-c={EncodeShellData(TempDarkluaConfigPath)}`)
+		end
 
-    -- We're now completely finished!
-    if fs.isDir(TempDir) then
-        RemoveDir(TempDir)
-    end
+		local OutPath = AssetFolder == nil and Output or TempDir .. "output.lua"
 
-    -- Let the user *clearly* know if there were any user-fault compiler errors
-    if FailedCompilations > 0 then
-        print()
-        Log.Warn(`WARNING: {FailedCompilations} scripts failed to compile ahead-of-time (CHECK FULL BUILD LOG ABOVE FOR MORE DETAILS); these will throw errors at runtime upon being loaded, detailing said compilation errors.`)
+		Run("darklua", {
+			"process",
+			EncodeShellData(TempOutputFilePath),
+			EncodeShellData(OutPath),
+			unpack(ExtraDarkluaProcessArgs),
+		})
 
-        process.exit(1)
-    end
+		RemoveFile(TempOutputFilePath)
+		if TempDarkluaConfigWasAdded then
+			RemoveFile(TempDarkluaConfigPath)
+		end
+
+		if AssetFolder ~= nil then
+			CodegenOutputOrError = fs.readFile(OutPath)
+			RemoveFile(OutPath)
+		else
+			DidWrite = true
+		end
+	elseif AssetFolder == nil then
+		WriteFile(Output, CodegenOutputOrError)
+		DidWrite = true
+	end
+
+	if not DidWrite then
+		local Script = roblox.Instance.new("Script")
+		Script.Source = CodegenOutputOrError
+		Script.Name = OutputFileName
+
+		fs.writeFile(OutputFileName .. ".rbxm", roblox.serializeModel({ Script, AssetFolder }))
+	end
+
+	-- We're now completely finished!
+	if fs.isDir(TempDir) then
+		RemoveDir(TempDir)
+	end
+
+	-- Let the user *clearly* know if there were any user-fault compiler errors
+	if FailedCompilations > 0 then
+		print()
+		Log.Warn(
+			`WARNING: {FailedCompilations} scripts failed to compile ahead-of-time (CHECK FULL BUILD LOG ABOVE FOR MORE DETAILS); these will throw errors at runtime upon being loaded, detailing said compilation errors.`
+		)
+
+		process.exit(1)
+	end
 else
-    Log.Error(`Subcommand "{Subcommand}" invalid, see usage for all valid subcommands:\n`)
-    print(UsageMessage)
-    process.exit(1)
+	Log.Error(`Subcommand "{Subcommand}" invalid, see usage for all valid subcommands:\n`)
+	print(UsageMessage)
+	process.exit(1)
 end

@@ -59,6 +59,8 @@ local ClassNameIdBindings = {
     [3] = "Script",
     [4] = "LocalScript",
     [5] = "StringValue",
+
+    [1000] = "BundledAsset",
 }
 
 local RefBindings = {} -- [RefId] = RealObject
@@ -305,6 +307,92 @@ local function CreateRefFromObject(object, parent)
     local ClassNameId = object[2]
     local Properties = object[3] -- Optional
     local Children = object[4] -- Optional
+
+    if ClassNameIdBindings[ClassNameId] == "BundledAsset" then
+      local Assets = script.Parent:FindFirstChild("BundledAssets")
+
+      if not Assets then
+        error("Bundle contains an asset, but the 'BundledAssets' folder is missing", 2)
+      end
+
+      local Asset = Assets:FindFirstChild(tostring(RefId))
+
+      if not Asset then
+        error("Asset " .. RefId .. " does not exist in the 'BundledAssets' folder", 2)
+      end
+
+      local Name = Properties and table_remove(Properties, 1) or Asset.ClassName
+
+      local meta = {}
+
+      local Ref = setmetatable({}, meta)
+
+      function meta:__index(index)
+        if index == "Name" then
+          return Name
+        elseif index == "Parent" then
+          return parent
+        end
+
+        local ok, res = pcall(function()
+          return Asset[index]
+        end)
+
+        if not ok then
+          error(index .. " is not a valid member of " .. Asset.ClassName .. " \"" .. Name .. "\"")
+        end
+
+        if typeof(res) == "function" then
+          return function(_, ...)
+            return res(Asset, ...)
+          end
+        else
+          return res
+        end
+      end
+
+      function meta:__newindex(index, value)
+        if index == "Parent" then
+          -- We'll just ignore the process if it's trying to set itself
+          if value == Ref then
+            return
+          end
+
+          if parent ~= nil then
+            -- Remove this ref from the CURRENT parent
+            RefChildren[parent][Ref] = nil
+          end
+
+          if typeof(value) ~= "Instance" then
+            parent = value
+          else
+            -- Here we can just not index the parent/child in the Ref map
+            -- because the new parent is an actual instance
+            parent = nil
+
+            -- Set the parent to a Roblox instance
+            Asset.Parent = value
+          end
+
+          if parent ~= nil then
+            -- And NOW we're setting the new parent
+            RefChildren[parent][Ref] = true
+          end
+        else
+          Asset[index] = value
+        end
+      end
+
+      RefChildren[Ref] = {}
+
+      if parent ~= nil then
+        RefChildren[parent][Ref] = true
+      end
+
+      RefBindings[RefId] = Ref
+
+      return Ref
+    end
 
     local ClassName = ClassNameIdBindings[ClassNameId]
 
