@@ -84,12 +84,12 @@ SUBCOMMANDS:
             Additionally, with Darklua, if a ".darklua.json/json5" file isn't found in the
             CWD (your dir "position" in your terminal), it'll use the default configuration
             we provide (see `lune/lib/data/DefaultDarkluaConfig.luau`)
-    
+
       * env-name[="WaxRuntime"]
             The name of the "environment" of the bundled script. This is the "name" of
             the root object (like the `game` DataModel in Roblox) and displays in virtual
             runtime errors (e.g. "[WaxRuntime].Script:1: Some error message")
-    
+
       * darklua-config-path[=(".darklua.json", ".darklua.json5")]
             When `minify` is set as true, this path can be used to directly pass your own
             Darklua config file's path, instead of only checking for the default paths
@@ -117,6 +117,9 @@ SUBCOMMANDS:
 
       * assets[=false]
             Whether to bundle non-compatible instances as assets
+
+      * noalias[=false]
+            Whether to build using rojo-build-noalias
 ]]
 
 local DirectionToHelp = "Run `lune wax help` for more info"
@@ -163,8 +166,10 @@ elseif Subcommand == "bundle" then
 		["ci-mode"] = { "boolean", false },
 		["verbose"] = { "boolean", true },
 		["assets"] = { "boolean", false },
+		["noalias"] = { "boolean", false },
 	}, UsageMessage)
 
+	local NoAlias = Options["noalias"]
 	local BundleAssets = Options["assets"]
 
 	local Verbose = Options["verbose"]
@@ -402,17 +407,30 @@ elseif Subcommand == "bundle" then
 		local ModelOutputFileName = TempDir .. OutputFileNameWithoutExtension .. ".o.rbxm"
 		RunIfVerbose(Log.Info, `Building from Rojo project file to "{ModelOutputFileName}"`)
 
-		Run(
-			"rojo",
-			{
-				"build",
-				"-o",
-				EncodeShellData(ModelOutputFileName),
-				EncodeShellData(Input),
-			},
-			false,
-			BadExit -- Run() has an option to provide an err handler ourselves
-		)
+		if NoAlias then
+		  Run(
+			  "rojo-build-noalias",
+			  {
+				  "-o",
+				  EncodeShellData(ModelOutputFileName),
+				  EncodeShellData(Input),
+			  },
+			  false,
+			  BadExit -- Run() has an option to provide an err handler ourselves
+		  )
+		  else
+		  Run(
+			  "rojo",
+			  {
+			    "build",
+				  "-o",
+				  EncodeShellData(ModelOutputFileName),
+				  EncodeShellData(Input),
+			  },
+			  false,
+			  BadExit -- Run() has an option to provide an err handler ourselves
+		  )
+		end
 
 		ModelRoot = roblox.deserializeModel(fs.readFile(ModelOutputFileName))
 		RemoveFile(ModelOutputFileName) -- Remove temporary rbxm
