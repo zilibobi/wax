@@ -19,7 +19,8 @@ local Config = {
         "remove_spaces",
         "remove_unused_if_branch",
         "remove_unused_while",
-
+        "remove_types",
+        "remove_unused_variable",
         {
             rule = "rename_variables",
             include_functions = true,

@@ -120,6 +120,20 @@ SUBCOMMANDS:
 
       * noalias[=false]
             Whether to build using rojo-build-noalias
+
+      * asset-modules[=""]
+            Comma-separated list of ModuleScript names to treat as assets when `assets=true`.
+            Supports exact name matching. Example: asset-modules="React,ReactRoblox,Roact"
+
+      * asset-folders[=""]
+            Comma-separated list of Folder names to treat as assets when `assets=true`.
+            Supports exact name matching. Example: asset-folders="Assets,Resources,Data"
+
+      * asset-module-names[=""]
+            Define custom names for bundled asset modules in the format "OriginalName:BundledName".
+            Use commas to separate multiple mappings. The BundledName will be used in the
+            BundledAssets folder, allowing external scripts or other asset modules to reference
+            them by name. Example: asset-module-names="React:@rbxts/react,Roact:Roact"
 ]]
 
 local DirectionToHelp = "Run `lune wax help` for more info"
@@ -167,10 +181,59 @@ elseif Subcommand == "bundle" then
 		["verbose"] = { "boolean", true },
 		["assets"] = { "boolean", false },
 		["noalias"] = { "boolean", false },
+		["asset-modules"] = { "string", "" },
+		["asset-folders"] = { "string", "" },
+		["asset-module-names"] = { "string", "" },
 	}, UsageMessage)
 
 	local NoAlias = Options["noalias"]
 	local BundleAssets = Options["assets"]
+
+	-- Parse asset-modules into a table
+	local AssetModules = {}
+	local AssetModulesStr = Options["asset-modules"]
+	if AssetModulesStr ~= "" then
+		for moduleName in string.gmatch(AssetModulesStr, "[^,]+") do
+			-- Trim whitespace
+			moduleName = string.match(moduleName, "^%s*(.-)%s*$")
+			if moduleName ~= "" then
+				table.insert(AssetModules, moduleName)
+			end
+		end
+	end
+
+	-- Parse asset-folders into a table
+	local AssetFolders = {}
+	local AssetFoldersStr = Options["asset-folders"]
+	if AssetFoldersStr ~= "" then
+		for folderName in string.gmatch(AssetFoldersStr, "[^,]+") do
+			-- Trim whitespace
+			folderName = string.match(folderName, "^%s*(.-)%s*$")
+			if folderName ~= "" then
+				table.insert(AssetFolders, folderName)
+			end
+		end
+	end
+
+	-- Parse asset-module-names into a mapping table
+	local AssetModuleNameMap = {}
+	local AssetModuleNamesStr = Options["asset-module-names"]
+	if AssetModuleNamesStr ~= "" then
+		for mapping in string.gmatch(AssetModuleNamesStr, "[^,]+") do
+			-- Trim whitespace
+			mapping = string.match(mapping, "^%s*(.-)%s*$")
+			-- Parse "OriginalName:BundledName" format
+			local originalName, bundledName = string.match(mapping, "^([^:]+):(.+)$")
+			if originalName and bundledName then
+				-- Trim any whitespace from both parts
+				originalName = string.match(originalName, "^%s*(.-)%s*$")
+				bundledName = string.match(bundledName, "^%s*(.-)%s*$")
+				if originalName ~= "" and bundledName ~= "" then
+					AssetModuleNameMap[originalName] = bundledName
+				end
+			end
+		end
+	end
 
 	local Verbose = Options["verbose"]
 	local CIMode = Options["ci-mode"]
@@ -266,7 +329,7 @@ elseif Subcommand == "bundle" then
 			process.exit(1)
 		end
 
-		NewOutputBase ..= ".wax.lua"
+		NewOutputBase ..= if BundleAssets then ".wax.rbxm" else ".wax.lua"
 		Output = InputDirectory .. NewOutputBase
 	else
 		local OutputFileType = StringUtils.FileType(Output)
@@ -280,10 +343,13 @@ elseif Subcommand == "bundle" then
 			Log.Error(`Directory of \`output\` file path given, "{DirectoryOfOutput}" not found/invalid\n`)
 			print(DirectionToHelp)
 			process.exit(1)
-		elseif not OutputFileType or not table.find({ "lua", "luau" }, OutputFileType) then
-			local FileTypeDisplay = if OutputFileType == "" then "<empty>" else "." .. OutputFileType
-
-			Log.Error(`File type of \`output\` ({FileTypeDisplay}) invalid, expected [".lua", ".luau"]\n`)
+		elseif not OutputFileType then
+			Log.Error(`File type of \`output\` (<empty>) invalid, expected [".lua", ".luau"` .. (if BundleAssets then `, ".rbxm"]` else `]`) .. `\n`)
+			print(DirectionToHelp)
+			process.exit(1)
+		elseif not table.find(if BundleAssets then { "lua", "luau", "rbxm" } else { "lua", "luau" }, OutputFileType) then
+			local FileTypeDisplay = "." .. OutputFileType
+			Log.Error(`File type of \`output\` ({FileTypeDisplay}) invalid, expected [".lua", ".luau"` .. (if BundleAssets then `, ".rbxm"]` else `]`) .. `\n`)
 			print(DirectionToHelp)
 			process.exit(1)
 		end
@@ -411,6 +477,7 @@ elseif Subcommand == "bundle" then
 		  Run(
 			  "rojo-build-noalias",
 			  {
+					"--process-orphans",
 				  "-o",
 				  EncodeShellData(ModelOutputFileName),
 				  EncodeShellData(Input),
@@ -437,7 +504,7 @@ elseif Subcommand == "bundle" then
 	end
 
 	local BundleSuccess, CodegenOutputOrError, AssetFolder, FailedCompilations =
-		pcall(BundleModel, ModelRoot, EnvName, Minify, ExtraOffsetLines, Verbose, BundleAssets)
+		pcall(BundleModel, ModelRoot, EnvName, Minify, ExtraOffsetLines, Verbose, BundleAssets, AssetModules, AssetFolders, AssetModuleNameMap)
 
 	if not BundleSuccess then
 		BadExit(`Error during BundleModel() process: {CodegenOutputOrError}`)
@@ -500,7 +567,15 @@ elseif Subcommand == "bundle" then
 		Script.Source = CodegenOutputOrError
 		Script.Name = OutputFileName
 
-		fs.writeFile(OutputFileName .. ".rbxm", roblox.serializeModel({ Script, AssetFolder }))
+		-- Determine the output path for the .rbxm file
+		local RbxmOutputPath = Output
+		local OutputFileType = StringUtils.FileType(Output)
+		if OutputFileType == "lua" or OutputFileType == "luau" then
+			-- Replace .lua or .luau extension with .rbxm
+			RbxmOutputPath = StringUtils.FilePathWithoutExtension(Output, true) .. ".rbxm"
+		end
+
+		fs.writeFile(RbxmOutputPath, roblox.serializeModel({ Script, AssetFolder }))
 	end
 
 	-- We're now completely finished!

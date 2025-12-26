@@ -37,12 +37,18 @@ local function BundleModel(
 	minifyCodegen: boolean?,
 	extraLinesToOffset: number?,
 	verbose: boolean?,
-	bundleAssets: boolean?
+	bundleAssets: boolean?,
+	assetModuleNames: { string }?,
+	assetFolderNames: { string }?,
+	assetModuleNameMap: { [string]: string }?
 ): (string, roblox.Instance?, number)
 	local EnvName = envName or "WaxRuntime"
 	local MinifyCodegen = if minifyCodegen == nil then true else minifyCodegen
 	local ExtraLinesToOffset = extraLinesToOffset or 0
 	local Verbose = if verbose == nil then true else verbose
+	local AssetModuleNames = assetModuleNames or {}
+	local AssetFolderNames = assetFolderNames or {}
+	local AssetModuleNameMap = assetModuleNameMap or {}
 
 	-- Same as in Wax CLI
 	local function RunIfVerbose(f, ...)
@@ -102,7 +108,27 @@ local function BundleModel(
 		local RefId = table.find(RefIds, instance)
 		local ClassName = instance.ClassName
 
-		local ClassNameId = ClassNameIdKeys[ClassName]
+		-- Check if this ModuleScript or Folder should be treated as an asset
+		local ShouldTreatAsAsset = false
+		if bundleAssets then
+			if ClassName == "ModuleScript" and #AssetModuleNames > 0 then
+				for _, moduleName in AssetModuleNames do
+					if instance.Name == moduleName then
+						ShouldTreatAsAsset = true
+						break
+					end
+				end
+			elseif ClassName == "Folder" and #AssetFolderNames > 0 then
+				for _, folderName in AssetFolderNames do
+					if instance.Name == folderName then
+						ShouldTreatAsAsset = true
+						break
+					end
+				end
+			end
+		end
+
+		local ClassNameId = if ShouldTreatAsAsset then nil else ClassNameIdKeys[ClassName]
 		if not ClassNameId and not bundleAssets then
 			Log.Warn(`Skipping instance of ClassName "{ClassName}", as it isn't supported in non-asset bundling`)
 			return
@@ -194,8 +220,15 @@ local function BundleModel(
 				InstanceObject[4] = ObjectChildren
 			end
 		else
-			instance.Name = RefId
+			-- Use custom name if provided, otherwise fall back to RefId
+			local originalName = instance.Name
+			local bundledName = AssetModuleNameMap[originalName] or tostring(RefId)
+
+			instance.Name = bundledName
 			instance.Parent = AssetFolder
+
+			-- Store the bundled name in the ObjectTree so the runtime can find it
+			InstanceObject[5] = bundledName
 
 			for _, desc in instance:GetDescendants() do
 				if not desc:IsA("BaseScript") and not desc:IsA("ModuleScript") then
@@ -203,7 +236,7 @@ local function BundleModel(
 				end
 
 				Log.Warn(
-					`WARNING: Asset {RefId} contains a script "{desc:GetFullName()}" that will not not be bundled. If you require any external modules inside, it will probably error at runtime.`
+					`WARNING: Asset "{bundledName}" (RefId: {RefId}) contains a script "{desc:GetFullName()}" that will not not be bundled. If you require any external modules inside, it will probably error at runtime.`
 				)
 
 				FailedCompilations += 1

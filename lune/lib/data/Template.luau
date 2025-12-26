@@ -77,6 +77,9 @@ local SharedEnvironment = {}
 -- It's meant to be as lazy as possible
 local RefChildren = {} -- [Ref] = {ChildrenRef, ...}
 
+-- Stores actual Roblox instances for BundledAssets
+local BundledAssetRefs = {} -- [ProxyRef] = ActualAssetInstance
+
 -- Implemented instance methods
 local InstanceMethods = {
     GetFullName = { {}, function(self)
@@ -246,6 +249,11 @@ local function CreateRef(className, name, parent)
         -- Next we'll look thru child refs
         for Child in next, Children do
             if Child.Name == index then
+                -- If child is a bundled asset, return real instance for non-ModuleScripts
+                local realInstance = BundledAssetRefs[Child]
+                if realInstance and realInstance.ClassName ~= "ModuleScript" then
+                    return realInstance
+                end
                 return Child
             end
         end
@@ -301,39 +309,76 @@ local function CreateRef(className, name, parent)
     return Ref
 end
 
--- Create real ref DOM from object tree
-local function CreateRefFromObject(object, parent)
-    local RefId = object[1]
-    local ClassNameId = object[2]
-    local Properties = object[3] -- Optional
-    local Children = object[4] -- Optional
-
-    if ClassNameIdBindings[ClassNameId] == "BundledAsset" then
-      local Assets = script.Parent:FindFirstChild("BundledAssets")
-
-      if not Assets then
-        error("Bundle contains an asset, but the 'BundledAssets' folder is missing", 2)
-      end
-
-      local Asset = Assets:FindFirstChild(tostring(RefId))
-
-      if not Asset then
-        error("Asset " .. RefId .. " does not exist in the 'BundledAssets' folder", 2)
-      end
-
-      local Name = Properties and table_remove(Properties, 1) or Asset.ClassName
-
+-- Creates a transparent proxy for a BundledAsset instance
+local function CreateAssetProxy(Asset, Name, parent)
       local meta = {}
 
       local Ref = setmetatable({}, meta)
+
+      -- Custom instance methods for bundled assets
+      -- These MUST return proxies to maintain tree structure for requires
+      local function GetChildrenHybrid(_)
+        local result = {}
+        local Children = RefChildren[Ref]
+        for Child in next, Children do
+          table_insert(result, Child)
+        end
+        return result
+      end
+
+      local function FindFirstChildHybrid(_, name, recursive)
+        local Children = RefChildren[Ref]
+        for Child in next, Children do
+          if Child.Name == name then
+            return Child
+          end
+        end
+
+        if recursive then
+          for Child in next, Children do
+            local result = Child:FindFirstChild(name, true)
+            if result then
+              return result
+            end
+          end
+        end
+      end
 
       function meta:__index(index)
         if index == "Name" then
           return Name
         elseif index == "Parent" then
           return parent
+        elseif index == "ClassName" then
+          return Asset.ClassName
+        elseif index == "GetChildren" then
+          return GetChildrenHybrid
+        elseif index == "FindFirstChild" then
+          return FindFirstChildHybrid
         end
 
+        -- Check if this is another instance method (for virtual object tree integration)
+        local InstanceMethod = InstanceMethodProxies[index]
+        if InstanceMethod then
+          return InstanceMethod
+        end
+
+        -- Check if we have a cached child proxy
+        local Children = RefChildren[Ref]
+        for Child in next, Children do
+          if Child.Name == index then
+            -- If it's a ModuleScript, return the proxy (for virtual requires)
+            -- Otherwise, return the real instance (for Clone, etc.)
+            local realInstance = BundledAssetRefs[Child]
+            if realInstance and realInstance.ClassName ~= "ModuleScript" then
+              return realInstance
+            end
+            return Child
+          end
+        end
+
+        -- For everything else, just forward to the actual asset
+        -- This includes properties, methods, and child instances
         local ok, res = pcall(function()
           return Asset[index]
         end)
@@ -342,6 +387,7 @@ local function CreateRefFromObject(object, parent)
           error(index .. " is not a valid member of " .. Asset.ClassName .. " \"" .. Name .. "\"")
         end
 
+        -- Forward functions with proper context, return everything else as-is
         if typeof(res) == "function" then
           return function(_, ...)
             return res(Asset, ...)
@@ -389,6 +435,51 @@ local function CreateRefFromObject(object, parent)
         RefChildren[parent][Ref] = true
       end
 
+      BundledAssetRefs[Ref] = Asset
+
+      -- Recursively create proxies to maintain tree structure for requires
+      local function CreateProxiesForTree(assetInstance, proxyParent)
+        local children = assetInstance:GetChildren()
+        for _, childAsset in next, children do
+          -- Always create a proxy to maintain tree structure
+          local childProxy = CreateAssetProxy(childAsset, childAsset.Name, proxyParent)
+          BundledAssetRefs[childProxy] = childAsset
+          -- Recursively handle children
+          CreateProxiesForTree(childAsset, childProxy)
+        end
+      end
+
+      CreateProxiesForTree(Asset, Ref)
+
+      return Ref
+end
+
+-- Create real ref DOM from object tree
+local function CreateRefFromObject(object, parent)
+    local RefId = object[1]
+    local ClassNameId = object[2]
+    local Properties = object[3] -- Optional
+    local Children = object[4] -- Optional
+    local AssetRef = object[5] -- Optional (bundled asset name)
+
+    if ClassNameIdBindings[ClassNameId] == "BundledAsset" then
+      local Assets = script.Parent:FindFirstChild("BundledAssets")
+
+      if not Assets then
+        error("Bundle contains an asset, but the 'BundledAssets' folder is missing", 2)
+      end
+
+      -- Use the bundled asset name if provided, otherwise fall back to RefId
+      local AssetName = AssetRef or tostring(RefId)
+      local Asset = Assets:FindFirstChild(AssetName)
+
+      if not Asset then
+        error("Asset \"" .. AssetName .. "\" (RefId: " .. RefId .. ") does not exist in the 'BundledAssets' folder", 2)
+      end
+
+      local Name = Properties and table_remove(Properties, 1) or Asset.ClassName
+
+      local Ref = CreateAssetProxy(Asset, Name, parent)
       RefBindings[RefId] = Ref
 
       return Ref
@@ -444,6 +535,25 @@ local function LoadScript(scriptRef)
     end
 
     local Closure = ScriptClosures[scriptRef]
+
+    -- If this is a BundledAsset (no closure), use the real require on the actual asset
+    if not Closure then
+        local ActualAsset = BundledAssetRefs[scriptRef]
+        if ActualAsset then
+            if ScriptClassName == "ModuleScript" then
+                local PCallReturn = {pcall(require, ActualAsset)}
+                local RequireSuccess = table_remove(PCallReturn, 1)
+                if not RequireSuccess then
+                    local ErrorMessage = table_remove(PCallReturn, 1)
+                    error(scriptRef:GetFullName() .. ": " .. tostring(ErrorMessage), 0)
+                end
+                StoredModuleValues[scriptRef] = PCallReturn
+                return unpack(PCallReturn)
+            end
+        end
+        -- If no closure and no asset, something went wrong
+        error("No closure found for " .. scriptRef:GetFullName(), 2)
+    end
 
     local function FormatError(originalErrorMessage)
         originalErrorMessage = tostring(originalErrorMessage)
