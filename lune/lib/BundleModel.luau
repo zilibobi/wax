@@ -229,18 +229,6 @@ local function BundleModel(
 
 			-- Store the bundled name in the ObjectTree so the runtime can find it
 			InstanceObject[5] = bundledName
-
-			for _, desc in instance:GetDescendants() do
-				if not desc:IsA("BaseScript") and not desc:IsA("ModuleScript") then
-					continue
-				end
-
-				Log.Warn(
-					`WARNING: Asset "{bundledName}" (RefId: {RefId}) contains a script "{desc:GetFullName()}" that will not not be bundled. If you require any external modules inside, it will probably error at runtime.`
-				)
-
-				FailedCompilations += 1
-			end
 		end
 
 		return InstanceObject, IsAssetBundle
