@@ -235,7 +235,7 @@ local function BundleModel(
 	end
 
 	for RealInstance, Children in ScrapedInstanceTree do
-		local ChildObjectTree, IsAssetBundle = CreateObjectTree(RealInstance, Children)
+		local ChildObjectTree = CreateObjectTree(RealInstance, Children)
 
 		if ChildObjectTree then
 			table.insert(ObjectTree, ChildObjectTree)
