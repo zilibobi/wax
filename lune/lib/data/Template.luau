@@ -20,6 +20,24 @@ local LineOffsets = ${LineOffsets}
 local WaxVersion = "${Version}"
 local EnvName = "${EnvName}"
 
+-- Eagerly cache the plugin instance from an ObjectValue sibling of the
+-- bundle script, configured by the `plugin-object-value` wax option. Runs
+-- at template init (synchronously during require), so the bundle's host
+-- script is still parented to its real holder; the cached Lua reference
+-- to the plugin survives any later destroy of that host script. When the
+-- option is unset, the substituted name is the empty string and
+-- FindFirstChild returns nil, leaving the cache nil and preserving the
+-- pre-feature fallback to script:FindFirstAncestorOfClass("Plugin").
+local _CachedPlugin do
+    local parent = script and script.Parent
+    local ref = parent and parent:FindFirstChild("${PluginObjectValue}")
+    _CachedPlugin = ref and ref.Value
+end
+
+local function ResolvePlugin()
+    return _CachedPlugin
+end
+
 -- ++++++++ RUNTIME IMPL BELOW ++++++++ --
 
 -- Localizing certain libraries and built-ins for runtime efficiency
@@ -151,7 +169,7 @@ local InstanceMethods = {
 
     FindFirstAncestorOfClass = { {"string"}, function(self, className)
         if className == "Plugin" then
-          return script:FindFirstAncestorOfClass("Plugin") -- fallback for plugins as they are created at runtime
+          return ResolvePlugin() or script:FindFirstAncestorOfClass("Plugin") -- fallback for plugins as they are created at runtime
         end
 
         local RefPointer = self.Parent
@@ -167,6 +185,29 @@ local InstanceMethods = {
     -- Just to implement for traversal usage
     WaitForChild = { {"string", "number?"}, function(self, name)
         return self:FindFirstChild(name)
+    end},
+
+    IsA = { {"string"}, function(self, className)
+        if className == "Instance" then
+            return true
+        end
+
+        local actualClass = self.ClassName
+        if actualClass == className then
+            return true
+        end
+
+        if className == "LuaSourceContainer"
+                and (actualClass == "ModuleScript" or actualClass == "Script" or actualClass == "LocalScript") then
+            return true
+        end
+
+        if className == "BaseScript"
+                and (actualClass == "Script" or actualClass == "LocalScript") then
+            return true
+        end
+
+        return false
     end},
 }
 
@@ -437,19 +478,12 @@ local function CreateAssetProxy(Asset, Name, parent)
 
       BundledAssetRefs[Ref] = Asset
 
-      -- Recursively create proxies to maintain tree structure for requires
-      local function CreateProxiesForTree(assetInstance, proxyParent)
-        local children = assetInstance:GetChildren()
-        for _, childAsset in next, children do
-          -- Always create a proxy to maintain tree structure
-          local childProxy = CreateAssetProxy(childAsset, childAsset.Name, proxyParent)
-          BundledAssetRefs[childProxy] = childAsset
-          -- Recursively handle children
-          CreateProxiesForTree(childAsset, childProxy)
-        end
+      -- CreateAssetProxy recursively creates child proxies via this loop;
+      -- the recursion lives inside the nested CreateAssetProxy calls, not here,
+      -- otherwise each descendant gets walked 2^depth times (#190).
+      for _, childAsset in next, Asset:GetChildren() do
+        CreateAssetProxy(childAsset, childAsset.Name, Ref)
       end
-
-      CreateProxiesForTree(Asset, Ref)
 
       return Ref
 end
@@ -650,22 +684,42 @@ function ImportGlobals(refId)
         local ErrorNonModuleScript = "Attempted to call require with a non-ModuleScript"
         local ErrorSelfRequire = "Attempted to call require with self"
 
+        local function failRequire(message)
+            local pathInfo = type(module) == "string" and (", path '" .. module .. "'") or ""
+            error(message .. " (from " .. ScriptRef:GetFullName() .. pathInfo .. ")", 3)
+        end
+
         if ModuleArgType == "table" and RefChildren[module]  then
             if module.ClassName ~= "ModuleScript" then
-                error(ErrorNonModuleScript, 2)
+                failRequire(ErrorNonModuleScript)
             elseif module == ScriptRef then
-                error(ErrorSelfRequire, 2)
+                failRequire(ErrorSelfRequire)
             end
 
             return LoadScript(module)
-        elseif ModuleArgType == "string" and string_sub(module, 1, 1) ~= "@" then
-            -- The control flow on this SUCKS
-
+        elseif ModuleArgType == "string" and (string_sub(module, 1, 1) ~= "@" or string_sub(module, 1, 6) == "@self/") then
             if #module == 0 then
-                error("Attempted to call require with empty string", 2)
+                failRequire("Attempted to call require with empty string")
             end
 
-            local CurrentRefPointer = ScriptRef
+            -- Luau's `@self/X` resolves against the script's "logical directory":
+            -- the parent folder for leaf scripts (so X is a sibling) and the
+            -- script itself for init.luau-style scripts (so X is an own child).
+            -- That's exactly what bare `X` already means under the starting-
+            -- pointer rule below, so strip the prefix and route through the
+            -- existing relative-path code. Necessary because native require
+            -- can't resolve `@self` from a loadstring'd bundle (no script
+            -- identity → falls back to the launcher's empty fakeScript).
+            if string_sub(module, 1, 6) == "@self/" then
+                module = string_sub(module, 7)
+            end
+
+            -- Leaf ModuleScripts are files inside their parent folder, so resolve
+            -- relative paths from that folder. init.luau-style scripts (rojo
+            -- collapses the folder's contents into the script's children) are
+            -- their own folder, so resolve from the script itself.
+            local CurrentRefPointer =
+                if next(ScriptRef:GetChildren()) ~= nil then ScriptRef else ScriptRef.Parent
 
             if string_sub(module, 1, 1) == "/" then
                 CurrentRefPointer = RealObjectRoot
@@ -684,17 +738,11 @@ function ImportGlobals(refId)
                 -- Don't advance dir if it's just another "/" either
                 if RealIndex ~= "" then
                     local ResultRef = CurrentRefPointer:FindFirstChild(RealIndex)
-                    if not ResultRef then
-                        local CurrentRefParent = CurrentRefPointer.Parent
-                        if CurrentRefParent then
-                            ResultRef = CurrentRefParent:FindFirstChild(RealIndex)
-                        end
-                    end
 
                     if ResultRef then
                         CurrentRefPointer = ResultRef
                     elseif PathMatch ~= PreviousPathMatch and PathMatch ~= "init" and PathMatch ~= "init.server" and PathMatch ~= "init.client" then
-                        error("Virtual script path \"" .. module .. "\" not found", 2)
+                        failRequire("Virtual script path \"" .. module .. "\" not found")
                     end
                 end
 
@@ -703,9 +751,9 @@ function ImportGlobals(refId)
             end
 
             if CurrentRefPointer.ClassName ~= "ModuleScript" then
-                error(ErrorNonModuleScript, 2)
+                failRequire(ErrorNonModuleScript)
             elseif CurrentRefPointer == ScriptRef then
-                error(ErrorSelfRequire, 2)
+                failRequire(ErrorSelfRequire)
             end
 
             return LoadScript(CurrentRefPointer)

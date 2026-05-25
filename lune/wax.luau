@@ -134,6 +134,19 @@ SUBCOMMANDS:
             Use commas to separate multiple mappings. The BundledName will be used in the
             BundledAssets folder, allowing external scripts or other asset modules to reference
             them by name. Example: asset-module-names="React:@rbxts/react,Roact:Roact"
+
+      * plugin-object-value[=""]
+            Name of an ObjectValue placed as a sibling of the bundle script at runtime
+            (by a launcher or wrapper). At template init wax reads `script.Parent` and
+            does a `FindFirstChild` for this name; whatever is in the ObjectValue's
+            `.Value` field is cached as a Lua reference and returned by every subsequent
+            `script:FindFirstAncestorOfClass("Plugin")` call on a wax proxy. The cache
+            is captured synchronously during `require`, so the plugin reference survives
+            a launcher destroying the bundle's host ModuleScript after require returns.
+            If the ObjectValue is missing wax falls back to the real script's ancestor
+            walk, preserving the no-launcher direct-install path. The name is a string
+            constant in the bundle and survives minification + Luraph.
+            Example: plugin-object-value="VFXForgePluginRef"
 ]]
 
 local DirectionToHelp = "Run `lune wax help` for more info"
@@ -184,6 +197,7 @@ elseif Subcommand == "bundle" then
 		["asset-modules"] = { "string", "" },
 		["asset-folders"] = { "string", "" },
 		["asset-module-names"] = { "string", "" },
+		["plugin-object-value"] = { "string", nil },
 	}, UsageMessage)
 
 	local NoAlias = Options["noalias"]
@@ -240,6 +254,7 @@ elseif Subcommand == "bundle" then
 
 	local Minify = Options["minify"]
 	local EnvName = Options["env-name"]
+	local PluginObjectValue = Options["plugin-object-value"]
 
 	local function RunIfVerbose(f, ...)
 		if Verbose then
@@ -478,6 +493,7 @@ elseif Subcommand == "bundle" then
 			  "rojo-build-noalias",
 			  {
 					"--process-orphans",
+					"--wax-compat",
 				  "-o",
 				  EncodeShellData(ModelOutputFileName),
 				  EncodeShellData(Input),
@@ -504,7 +520,7 @@ elseif Subcommand == "bundle" then
 	end
 
 	local BundleSuccess, CodegenOutputOrError, AssetFolder, FailedCompilations =
-		pcall(BundleModel, ModelRoot, EnvName, Minify, ExtraOffsetLines, Verbose, BundleAssets, AssetModules, AssetFolders, AssetModuleNameMap)
+		pcall(BundleModel, ModelRoot, EnvName, Minify, ExtraOffsetLines, Verbose, BundleAssets, AssetModules, AssetFolders, AssetModuleNameMap, PluginObjectValue)
 
 	if not BundleSuccess then
 		BadExit(`Error during BundleModel() process: {CodegenOutputOrError}`)

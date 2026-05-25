@@ -40,7 +40,8 @@ local function BundleModel(
 	bundleAssets: boolean?,
 	assetModuleNames: { string }?,
 	assetFolderNames: { string }?,
-	assetModuleNameMap: { [string]: string }?
+	assetModuleNameMap: { [string]: string }?,
+	pluginObjectValue: string?
 ): (string, roblox.Instance?, number)
 	local EnvName = envName or "WaxRuntime"
 	local MinifyCodegen = if minifyCodegen == nil then true else minifyCodegen
@@ -284,6 +285,7 @@ local function BundleModel(
 		ObjectTree = SerializedObjectTree,
 		ClosureBindings = SerializedClosureBindings,
 		LineOffsets = SerializedLineOffsets,
+		PluginObjectValue = pluginObjectValue or "",
 	})
 
 	-- If there's a top-level init modulescript, we'll return it from the output's closure directly
